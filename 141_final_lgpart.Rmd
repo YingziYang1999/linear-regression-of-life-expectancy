@@ -1,0 +1,271 @@
+---
+title: "141final_linearpart"
+author: "Yingzi"
+date: "2022/6/4"
+output: html_document
+---
+
+## Introduction (for linear regression part)
+
+Our group conducted a study on what factors would affect the life expectancy. In this study, we use classical linear regression model to fit the data. The whole process includes dealing with missing values, data fitting, model assumption checking and interpreting results.
+
+## Method and Results
+
+### Dealing with missing values
+
+Although our original data comes from the years 2000-2015 for 193 countries, we choose data from the year 2014 to avoid data auto correlation and overfitting. 
+
+We could take a look at the rank and numbers of missing values.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+#load data and choose a fixed year
+data0<-read.csv("D://data//Life Expectancy Data.csv")
+data<-data0[which(data0$Year==2014),]
+data<-data[,-2]
+data<-data[,-1]
+head(sort(sapply(data, function(x) sum(is.na(x))),decreasing = TRUE))
+```
+
+After looking though the missing values of population and GDP, we found that most of observations lost values of population and GDP at the same time. So we choose to remove these observations. After that, we still have some obeservations which are missing population values. we decided to use mean of population to fill in them. To increase the accuracy of filling in, we use the observation's status mean values. It means we use mean of developing countries to fill in developing observation's missing values, and use means of developed countries to fill in developed observation's missing values.
+
+For the rest missing values, since the numbers of them are not large, we use mean of the variable to fill in.
+
+After processing, the dataset contains 183 observations of 20 variables.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+pop_mean_developing=mean(data[which(data$Status=='Developing'),]$Population,na.rm = T)
+pop_mean_developed=mean(data[which(data$Status=='Developed'),]$Population,na.rm = T)
+
+data[which(is.na(data$Population) & data$Status=='Developing'),'Population'] <- pop_mean_developing
+data[which(is.na(data$Population) & data$Status=='Developed'),'Population'] <- pop_mean_developed
+
+#fill the rest missing values with col mean
+fillin<-function(data){
+  for(i in 1:ncol(data)){
+    data[is.na(data[,i]), i] <- mean(data[,i], na.rm = TRUE)
+  }
+  return(data)
+}
+data<-fillin(data)
+```
+
+### Fit the linear regression model
+
+Before we start conducting the model, we should check the relationships between predicted variables. In dataset, we have one categorical variable (status), and 19 qualitative variables. The plot of correlation matrix is below.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+#correlation matrix
+library(corrplot)
+corrplot(cor(data[,2:20]), type = "lower", order = "hclust", tl.col = "black")
+```
+
+From the plot we can see that there are many variables are highly correlated, we need to remove some of them later.
+
+For modeling, we initially fit the full model, first-order multiple regression model with 20 predictors. It has 0.8255 adjusted R-squared and 7 significant X variables with 163 degrees of freedom. 
+
+```{r,include=FALSE,message=FALSE, warning=FALSE}
+fit.e1<-lm(Life.expectancy~as.factor(Status)+Adult.Mortality+infant.deaths+Alcohol
+           +percentage.expenditure+Hepatitis.B+Measles+BMI+under.five.deaths+Polio
+           +Total.expenditure+Diphtheria+HIV.AIDS+thinness..1.19.years+thinness.5.9.years
+           + Income.composition.of.resources + Schooling + GDP + Population, data=data)
+length(fit.e1$coefficients)
+summary(fit.e1)
+```
+
+After that, we check the plots of model diagnostics, it firstly doesn't show nonlinear pattern. And it looks like not violate the unequal variance assumption. Based on the normal Q-Q plot, it shows more probability mass on both tails. Lastly, the leverage plot confirms the model isn't affected by influential outliers and leverages.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+par(mfrow = c(2, 2))
+plot(fit.e1,which = 1:4)
+```
+
+And then, we checked the variance inflation factor for each x variable, and we found several groups of intercorrelation x variables, like infant.deaths and under.five.deaths, thinness..1.19.years and thinness.5.9.years. So we remove one or several of them to reduce multicollinearity.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+car::vif(fit.e1)
+```
+
+After that, we fit the new model with rest variables. But the summary of regression still shows there are some variables are not significant. In order to achieve the balance of goodness-of-fit, we apply the forward stepwise selection with AIC and backward stepwise selection with BIC. AIC selection method yields the models with 9 variables and BIC method yields the models with 8 variables, but the model chosen by AIC has the largest adjusted R^2 0.7968.
+
+```{r,include=FALSE,message=FALSE, warning=FALSE}
+fit.e2 <-
+  lm(Life.expectancy~as.factor(Status)+Adult.Mortality+Alcohol
+     +Hepatitis.B+Measles+BMI+Polio
+     +Total.expenditure+HIV.AIDS+thinness.5.9.years
+     + Schooling + GDP + Population, data=data)
+length(fit.e2$coefficients)
+summary(fit.e2)
+```
+
+```{r,include=FALSE,message=FALSE, warning=FALSE}
+library(MASS)
+none_mod <- lm(Life.expectancy ~ 1, data = data)
+fit.e2aic <-stepAIC(none_mod, scope = list(upper = fit.e2, lower = ~1), direction = "forward", k = 2, trace = FALSE)
+summary(fit.e2aic)
+
+n <- nrow(data)
+fit.e2bic <- stepAIC(fit.e2, scope = list(upper = fit.e2, lower =
+                                               ~1), direction = "backward", k = log(n), trace = FALSE)
+summary(fit.e2bic)
+```
+
+Then we need to check assumptions of the selected model.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+fit.e2best <- fit.e2bic
+car::vif(fit.e2best)
+par(mfrow = c(2, 2))
+plot(fit.e2best,which = 1:4)
+```
+
+The plot firstly doesn't show obviously nonlinear pattern. And it looks like not violate the unequal variance assumption. Based on the normal Q-Q plot, it shows lightly heavy-tailed distribution. 
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+par(mfrow = c(2, 1))
+plot(fit.e2best,which = 5:6)
+```
+
+When we examine the outliers and influential cases in the BIC chosen model, we found there is one case 434 is outlying in Y in which it is larger than the Bonferroni’s procedure with significance level 0.1. And we don't find the points are outlying in X or leverage points. We exclude this case indicated in outlying in Y, and fit the final regression model.
+
+```{r,include=FALSE,message=FALSE, warning=FALSE}
+fit.e2best <- lm(formula = Life.expectancy ~ as.factor(Status) + Adult.Mortality + 
+    Alcohol + Hepatitis.B + HIV.AIDS + thinness.5.9.years + Schooling + 
+    GDP, data = data,subset=setdiff(rownames(data),"434"))
+summary(fit.e2best)
+```
+
+The final model after exclusion has 8 significant variables and the adjusted R^2 raised to 0.8175 with 173 degrees of freedom. At the same time, when we check the diagnostic plots of the final model, there is no obvious violation of assumptions as well.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+par(mfrow = c(2, 2))
+plot(fit.e2best,which = 1:4)
+```
+
+The final model is: 
+$$Life\_expectancy=63.89-1.81\cdot1(Status='Developing')-.03Adult\_Mortality+.19Alcohol+.02Hepatitis-1.08HIV\_AIDS
+-.19Thinness+.94Schooling+.000039GDP$$
+
+## Discussion and Conclusion
+
+Our goal is to find variables that significantly affect the life expectancy for 183 countries. The coefficients shows that life expectancy increases by 0.19 for every unit increase in pure alcohol consumption ; by 0.02 every percent increase in Hepatitis B immunization coverage among 1-year-olds; by 0.94 for every unit increase in number of years of schooling; and very lightly increase in GDP. Ans the coefficients shows that life expectancy decreases by 1.81 if the country is developing country; by 0.03 for every unit increase in adult mortality rates; by 1.08 for every unit increase in death per 1000 born with HIV; by 0.19 for every percent increase in prevalence of thinness of children of 5-9.
+
+
+## Appendix
+
+```{r,eval=FALSE}
+#load data and choose a fixed year
+data0<-read.csv("D://data//Life Expectancy Data.csv")
+data<-data0[which(data0$Year==2014),]
+data<-data[,-2]
+sort(sapply(data, function(x) sum(is.na(x))),decreasing = TRUE)
+
+#deal with missing values
+#delete rows that population and GDP are missing
+data<-data[-which(is.na(data$Population) & is.na(data$GDP)),]
+
+sort(sapply(data, function(x) sum(is.na(x))),decreasing = TRUE)
+#fill population with categorical mean values
+pop_mean_developing=mean(data[which(data$Status=='Developing'),]$Population,na.rm = T)
+pop_mean_developed=mean(data[which(data$Status=='Developed'),]$Population,na.rm = T)
+
+data[which(is.na(data$Population) & data$Status=='Developing'),'Population'] <- pop_mean_developing
+data[which(is.na(data$Population) & data$Status=='Developed'),'Population'] <- pop_mean_developed
+
+#fill the rest missing values with col mean
+fillin<-function(data){
+  for(i in 1:ncol(data)){
+    data[is.na(data[,i]), i] <- mean(data[,i], na.rm = TRUE)
+  }
+  return(data)
+}
+data<-fillin(data)
+
+
+#correlation matrix
+library(corrplot)
+corrplot(cor(data[,4:21]), type = "lower", order = "hclust", tl.col = "black")
+#high correlated variables
+for (i in 1:length(corr)){
+  cat(colnames(corr)[i],'and ', rownames(corr)[which(abs(corr[,i]) > 0.8 & abs(corr[,i]) < 1)],'\n')
+}
+
+fit.e1<-lm(Life.expectancy~as.factor(Status)+Adult.Mortality+infant.deaths+Alcohol
+           +percentage.expenditure+Hepatitis.B+Measles+BMI+under.five.deaths+Polio
+           +Total.expenditure+Diphtheria+HIV.AIDS+thinness..1.19.years+thinness.5.9.years
+           + Income.composition.of.resources + Schooling + GDP + Population, data=data)
+length(fit.e1$coefficients)
+summary(fit.e1)
+par(mfrow = c(2, 2))
+plot(fit.e1,which = 1:4)
+car::vif(fit.e1)
+
+fit.e2 <-
+  lm(Life.expectancy~as.factor(Status)+Adult.Mortality+Alcohol
+     +Hepatitis.B+Measles+BMI+Polio
+     +Total.expenditure+HIV.AIDS+thinness.5.9.years
+     + Schooling + GDP + Population, data=data)
+length(fit.e2$coefficients)
+summary(fit.e2)
+plot(fit.e2)
+car::vif(fit.e2)
+
+
+#No variable's vif>5
+
+#stepwise regression
+#AIC selection
+library(MASS)
+none_mod <- lm(Life.expectancy ~ 1, data = data)
+fit.e2aic <-stepAIC(none_mod, scope = list(upper = fit.e2, lower = ~1), direction = "both", k = 2, trace = FALSE)
+summary(fit.e2aic)
+
+fit.e2bic <- stepAIC(fit.e2, scope = list(upper = fit.e2, lower =
+                                               ~1), direction = "both", k = log(n), trace = FALSE)
+summary(fit.e2bic)
+
+#r2(aic)>r2(bic)
+fit.e2best <- fit.e2aic
+car::vif(fit.e2best)
+par(mfrow = c(2, 2))
+plot(fit.e2best,which = 1:4)
+
+#exam y outliers
+p <- length(fit.e2best$coefficients)
+stu.res.del <- studres(fit.e2best)
+head(sort(abs(stu.res.del), decreasing = TRUE))
+qt(1-.1/(2*n), n-p-1)
+#exam x outliers
+h <- influence(fit.e2best)$hat
+c <- 2 * p/n
+sort(h[which (h > c)], decreasing = TRUE)
+#see cook's distance
+par(mfrow = c(1, 1))
+plot(fit.e2best,which = 4)
+
+fit.e2best <- lm(formula = Life.expectancy ~ as.factor(Status) + Adult.Mortality + 
+    Alcohol + Hepatitis.B + HIV.AIDS + thinness.5.9.years + Schooling + 
+    GDP, data = data,subset=setdiff(rownames(data),"434"))
+summary(fit.e2best)
+
+par(mfrow = c(2, 2))
+plot(fit.e2best,which = 1:4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
